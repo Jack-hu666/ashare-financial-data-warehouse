@@ -102,4 +102,17 @@ streamlit run dashboard/app.py
 4. **新浪「营业成本」口径错误** → 实为营业总成本；改用东财利润表 `OPERATE_COST`。
 5. **金融企业（银行/券商/保险）报表结构不同** → 无 `TOTAL_OPERATE_INCOME`/`OPERATE_COST`；统一用 `OPERATE_INCOME`（营业收入），金融企业营业成本为 NULL 属正常。
 
-（MySQL 落库行数、看板截图等运行期数字见验证输出，【待实测】补充）
+## 实际结果汇总（实测）
+
+| 层 / 表 | 行数 | 说明 |
+| --- | --- | --- |
+| ODS | 768 | 64 家 × 3 年（12 季度） |
+| DWD | 768 | 主键 `(stock_code, report_date)` 0 重复，revenue 空值 0 |
+| dws_company_metrics | 768 | 公司级指标宽表 |
+| dws_industry_metrics | 348 | 行业级聚合（29 行业 × 12 期） |
+| ads_industry_margin_trend | 348 | 行业毛利率/净利率趋势 |
+| ads_consecutive_decline | 50 | 连续 3 期毛利率下滑（公司×报告期） |
+| ads_low_quality_profit | 126 | 连续 2 期盈利质量 < 0.5 |
+
+- 质量校验：3 条全 PASS（`--inject-bad-data` 可触发规则 1 FAIL）。
+- 口径复核：贵州茅台 2025 年报毛利率 91.18%，与新浪自带「毛利率」字段一致。
