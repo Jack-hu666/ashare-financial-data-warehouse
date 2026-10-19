@@ -3,45 +3,46 @@
 ## 整体分层
 
 ```
-                    ┌─────────────────────────────────────────────┐
-                    │  数据源：AkShare（免费开源，无需 token）       │
-                    │  ① stock_financial_abstract     新浪财务摘要  │
-                    │  ② stock_balance_sheet_by_report_em 东财资产负债表 │
-                    │  ③ stock_profile_cninfo         巨潮公司档案  │
-                    └───────────────┬─────────────────────────────┘
+                    ┌──────────────────────────────────────────────────┐
+                    │  数据源：AkShare（免费开源，无需 token）           │
+                    │  ① stock_profit_sheet_by_report_em   东财利润表    │
+                    │  ② stock_balance_sheet_by_report_em  东财资产负债表 │
+                    │  ③ stock_cash_flow_sheet_by_report_em 东财现金流量表 │
+                    │  ④ stock_profile_cninfo              巨潮公司档案   │
+                    └───────────────┬──────────────────────────────────┘
                                     │ src/ingest.py（合并 + 落盘）
                                     ▼
-                    ┌─────────────────────────────────────────────┐
-                    │  ODS  原始层  data/ods/fin_report/dt=YYYY-MM-DD │
-                    │  原则：金额原样保留（元），一行不删，不清洗       │
-                    │  粒度：(stock_code, report_date)               │
-                    └───────────────┬─────────────────────────────┘
+                    ┌──────────────────────────────────────────────────┐
+                    │  ODS  原始层  data/ods/fin_report/dt=YYYY-MM-DD    │
+                    │  原则：金额原样保留（元），一行不删，不清洗          │
+                    │  粒度：(stock_code, report_date)                   │
+                    └───────────────┬──────────────────────────────────┘
                                     │ src/dwd_clean.py（PySpark）
                                     ▼
-                    ┌─────────────────────────────────────────────┐
-                    │  DWD  明细层  data/dwd/fin_report/            │
-                    │  单位统一(元) / 期对齐(date) / 主键去重 /        │
-                    │  NULL 保留 / ST 打标                           │
-                    └───────────────┬─────────────────────────────┘
+                    ┌──────────────────────────────────────────────────┐
+                    │  DWD  明细层  data/dwd/fin_report/                 │
+                    │  单位统一(元) / 期对齐(date) / 主键去重 /           │
+                    │  NULL 保留 / ST 打标                               │
+                    └───────────────┬──────────────────────────────────┘
                                     │ src/dws_metrics.py（Spark SQL + 窗口函数）
                                     ▼
-                    ┌─────────────────────────────────────────────┐
-                    │  DWS  汇总层  dws_company_metrics /           │
-                    │               dws_industry_metrics           │
-                    │  6 个指标 + 同比(LAG4) + 行业排名(RANK)         │
-                    └───────────────┬─────────────────────────────┘
+                    ┌──────────────────────────────────────────────────┐
+                    │  DWS  汇总层  dws_company_metrics /                │
+                    │               dws_industry_metrics                │
+                    │  6 个指标 + 同比(LAG4) + 行业排名(RANK)             │
+                    └───────────────┬──────────────────────────────────┘
                                     │ 派生
                                     ▼
-                    ┌─────────────────────────────────────────────┐
-                    │  ADS  应用层  ads_industry_margin_trend /      │
-                    │               ads_consecutive_decline /       │
-                    │               ads_low_quality_profit          │
-                    └───────────────┬─────────────────────────────┘
+                    ┌──────────────────────────────────────────────────┐
+                    │  ADS  应用层  ads_industry_margin_trend /           │
+                    │               ads_consecutive_decline /            │
+                    │               ads_low_quality_profit               │
+                    └───────────────┬──────────────────────────────────┘
                                     │ 结果写入 MySQL 8.0（Docker）
                                     ▼
-                    ┌─────────────────────────────────────────────┐
-                    │  可视化：Streamlit 看板（dashboard/app.py）     │
-                    └─────────────────────────────────────────────┘
+                    ┌──────────────────────────────────────────────────┐
+                    │  可视化：Streamlit 看板（dashboard/app.py）         │
+                    └──────────────────────────────────────────────────┘
 ```
 
 ## 字段级血缘
@@ -50,14 +51,14 @@
 | --- | --- | --- | --- |
 | stock_code | 采集清单 | stock_code (string) | 去重键之一 |
 | stock_name | 采集清单 | stock_name (string) | 用于 ST 判断 |
-| industry | 巨潮 ③「所属行业」 | industry (string) | 保留 |
-| report_date | ①报告期列 / ②REPORT_DATE | report_date (date) | 类型对齐为 date |
-| revenue（营业总收入） | ① 新浪 | revenue (decimal, 元) | 单位核对（源=元） |
-| cost（营业成本） | ① 新浪 | cost (decimal, 元) | 同上 |
-| net_profit（净利润） | ① 新浪 | net_profit (decimal, 元) | 同上 |
+| industry | 巨潮 ④「所属行业」 | industry (string) | 保留 |
+| report_date | ①②③ 的 REPORT_DATE | report_date (date) | 类型对齐为 date |
+| revenue（营业总收入） | ① 东财 TOTAL_OPERATE_INCOME | revenue (decimal, 元) | 单位核对（源=元） |
+| cost（营业成本） | ① 东财 OPERATE_COST | cost (decimal, 元) | 同上 |
+| net_profit（净利润） | ① 东财 NETPROFIT | net_profit (decimal, 元) | 同上 |
 | total_assets（总资产） | ② 东财 TOTAL_ASSETS | total_assets (decimal, 元) | 同上 |
 | total_liab（总负债） | ② 东财 TOTAL_LIABILITIES | total_liab (decimal, 元) | 同上 |
-| ocf（经营现金流净额） | ① 新浪 | ocf (decimal, 元) | 同上 |
+| ocf（经营现金流净额） | ③ 东财 NETCASH_OPERATE | ocf (decimal, 元) | 同上 |
 | ar（应收账款） | ② 东财 ACCOUNTS_RECE | ar (decimal, 元) | 同上（金融业为 NULL） |
 | — | — | is_st (boolean) | 由 stock_name 是否含 ST 派生 |
 
