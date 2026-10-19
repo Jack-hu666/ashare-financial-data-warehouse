@@ -1,9 +1,15 @@
 """Step 1：AkShare 采集 A 股财务数据 → ODS（Parquet，按 dt 分区）。
 
-数据源（3 个 AkShare 接口，按公司维度各调一次）：
-  1. stock_financial_abstract(symbol)        —— 新浪财务摘要：营收/成本/净利润/经营现金流
-  2. stock_balance_sheet_by_report_em(symbol) —— 东财资产负债表：总资产/总负债/应收账款
-  3. stock_profile_cninfo(symbol)            —— 巨潮公司档案：所属行业
+数据源（4 个 AkShare 接口，按公司维度各调一次）：
+  1. stock_profit_sheet_by_report_em(symbol)    —— 东财利润表：营业总收入/营业成本/净利润
+  2. stock_balance_sheet_by_report_em(symbol)   —— 东财资产负债表：总资产/总负债/应收账款
+  3. stock_cash_flow_sheet_by_report_em(symbol) —— 东财现金流量表：经营活动现金流量净额
+  4. stock_profile_cninfo(symbol)               —— 巨潮公司档案：所属行业
+
+为什么不用新浪 stock_financial_abstract：
+  其「营业成本」字段实际是「营业总成本」（已用贵州茅台核对：新浪给出 545 亿，
+  而东财 OPERATE_COST 真营业成本为 138 亿，算得毛利率 92.1% 与新浪自带 91.93% 吻合），
+  会导致毛利率严重偏低，故统一改用东财三大报表，口径一致、字段正确。
 
 原则（ODS 层）：
   - 金额保持 AkShare 原始数值（元），不做任何换算/补 0/去重/过滤（仅按年份范围裁剪）
@@ -11,15 +17,15 @@
   - 每次运行落一个 dt=YYYY-MM-DD 分区，并写采集日志
 
 用法：
-  python -m src.ingest              # 全量 64 家
-  python -m src.ingest --limit 3    # 先跑 3 家验证
+  python -m src.ingest                        # 全量
+  python -m src.ingest --limit 3              # 先跑 3 家验证
+  python -m src.ingest --codes 600030,000333  # 补采指定代码
 """
 import argparse
 import logging
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 
@@ -34,43 +40,65 @@ def em_symbol(code: str) -> str:
     return ("SH" if code.startswith("6") else "SZ") + code
 
 
-def _fetch_sina_abstract(code: str) -> pd.DataFrame:
-    """新浪财务摘要：宽表(指标×报告期) -> 长表(report_date × 指标列)。"""
+def _fetch_em_profit(em_code: str) -> pd.DataFrame:
+    """东财利润表：营业收入 / 营业成本 / 净利润。
+
+    注意：金融企业（银行/券商/保险）的利润表没有 TOTAL_OPERATE_INCOME、OPERATE_COST
+    两列，但有 OPERATE_INCOME（营业收入）。为统一口径，revenue 取「营业收入 OPERATE_INCOME」，
+    缺失时才回退到 TOTAL_OPERATE_INCOME；cost 取 OPERATE_COST（金融企业缺失→NULL）。
+    """
     import akshare as ak
 
-    df = ak.stock_financial_abstract(symbol=code)
-    # 指标列有重复（多个小节），保留首个；转置成「报告期 × 指标」
-    df = df.drop(columns=["选项"]).drop_duplicates(subset="指标", keep="first").set_index("指标")
-    t = df.T
-    t.index = pd.to_datetime(t.index, format="%Y%m%d")
-    t.index.name = "report_date"
+    df = ak.stock_profit_sheet_by_report_em(symbol=em_code)
+    out = pd.DataFrame()
+    out["report_date"] = pd.to_datetime(df["REPORT_DATE"]).dt.normalize()
 
-    mapping = {
-        "revenue": "营业总收入",
-        "cost": "营业成本",
-        "net_profit": "净利润",
-        "ocf": "经营现金流量净额",
-    }
-    out = pd.DataFrame(index=t.index)
-    for eng, cn in mapping.items():
-        out[eng] = pd.to_numeric(t[cn], errors="coerce") if cn in t.columns else pd.NA
-    return out.reset_index()
+    rev = pd.to_numeric(df["OPERATE_INCOME"], errors="coerce") if "OPERATE_INCOME" in df.columns else pd.NA
+    if "OPERATE_INCOME" not in df.columns and "TOTAL_OPERATE_INCOME" in df.columns:
+        rev = pd.to_numeric(df["TOTAL_OPERATE_INCOME"], errors="coerce")
+    out["revenue"] = rev
+    out["cost"] = (
+        pd.to_numeric(df["OPERATE_COST"], errors="coerce")
+        if "OPERATE_COST" in df.columns
+        else pd.NA
+    )
+    out["net_profit"] = (
+        pd.to_numeric(df["NETPROFIT"], errors="coerce")
+        if "NETPROFIT" in df.columns
+        else pd.NA
+    )
+    return out
 
 
 def _fetch_em_balance(em_code: str) -> pd.DataFrame:
-    """东财资产负债表：取总资产/总负债/应收账款。"""
+    """东财资产负债表：总资产 / 总负债 / 应收账款。"""
     import akshare as ak
 
-    bs = ak.stock_balance_sheet_by_report_em(symbol=em_code)
+    df = ak.stock_balance_sheet_by_report_em(symbol=em_code)
     out = pd.DataFrame()
-    out["report_date"] = pd.to_datetime(bs["REPORT_DATE"]).dt.normalize()
+    out["report_date"] = pd.to_datetime(df["REPORT_DATE"]).dt.normalize()
     # 券商等金融企业的资产负债表可能缺少 ACCOUNTS_RECE 列，缺失按 NULL 处理
     for src, dst in (
         ("TOTAL_ASSETS", "total_assets"),
         ("TOTAL_LIABILITIES", "total_liab"),
         ("ACCOUNTS_RECE", "ar"),
     ):
-        out[dst] = pd.to_numeric(bs[src], errors="coerce") if src in bs.columns else pd.NA
+        out[dst] = pd.to_numeric(df[src], errors="coerce") if src in df.columns else pd.NA
+    return out
+
+
+def _fetch_em_cashflow(em_code: str) -> pd.DataFrame:
+    """东财现金流量表：经营活动现金流量净额。"""
+    import akshare as ak
+
+    df = ak.stock_cash_flow_sheet_by_report_em(symbol=em_code)
+    out = pd.DataFrame()
+    out["report_date"] = pd.to_datetime(df["REPORT_DATE"]).dt.normalize()
+    out["ocf"] = (
+        pd.to_numeric(df["NETCASH_OPERATE"], errors="coerce")
+        if "NETCASH_OPERATE" in df.columns
+        else pd.NA
+    )
     return out
 
 
@@ -105,14 +133,19 @@ ODS_COLS = [
 
 
 def fetch_company(code: str, name: str) -> pd.DataFrame:
-    """拉取一家公司的三份数据并合并成 (report_date × 字段) 长表。"""
-    sina = _with_retry(_fetch_sina_abstract, code)
+    """拉取一家公司的三张报表 + 行业，合并成 (report_date × 字段) 长表。"""
+    em = em_symbol(code)
+    profit = _with_retry(_fetch_em_profit, em)
     time.sleep(config.SLEEP_SECONDS)
-    em = _with_retry(_fetch_em_balance, em_symbol(code))
+    balance = _with_retry(_fetch_em_balance, em)
+    time.sleep(config.SLEEP_SECONDS)
+    cashflow = _with_retry(_fetch_em_cashflow, em)
     time.sleep(config.SLEEP_SECONDS)
     industry = _with_retry(_fetch_industry, code)
 
-    merged = sina.merge(em, on="report_date", how="inner")
+    merged = profit.merge(balance, on="report_date", how="inner").merge(
+        cashflow, on="report_date", how="inner"
+    )
     merged["stock_code"] = code
     merged["stock_name"] = name
     merged["industry"] = industry
