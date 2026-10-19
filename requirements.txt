@@ -1,0 +1,22 @@
+# finance-dw 依赖（Python 3.10）
+# 注意：PySpark 在 Windows 上额外需要（非 pip 依赖，见 README「快速开始」）：
+#   1) JDK 17（Temurin，需含 jdk.incubator.vector 模块）
+#   2) HADOOP_HOME/bin 下的 winutils.exe + hadoop.dll
+
+# 采集
+akshare==1.18.88
+
+# 计算（PySpark 本地模式）
+pyspark==4.1.1
+py4j==0.10.9.9
+pandas==2.3.3
+numpy==2.2.6
+pyarrow==25.0.1
+
+# 结果库 MySQL 写入
+sqlalchemy==2.0.54
+pymysql==1.2.3
+
+# 可视化看板
+streamlit==1.65.0
+plotly==7.1.0
