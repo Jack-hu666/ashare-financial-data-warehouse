@@ -151,13 +151,23 @@ def _sync_schema(engine) -> None:
 
 
 def _to_pandas(sdf) -> pd.DataFrame:
-    """Spark DataFrame → pandas，统一 dtype 以匹配 MySQL 表结构。"""
+    """Spark DataFrame → pandas，统一 dtype 以匹配 MySQL 表结构。
+
+    关键：只有字符串列（stock_code/stock_name/industry）才转 str；
+    数值列（含 NULL 的 decimal/int）转成 float，让 NaN 在 to_sql 时正确写为 NULL，
+    而不是被 astype(str) 变成字符串 'None'（MySQL DECIMAL 会拒绝）。
+    """
     pdf = sdf.toPandas()
     if "report_date" in pdf.columns:
         pdf["report_date"] = pd.to_datetime(pdf["report_date"]).dt.date
+    str_cols = {"stock_code", "stock_name", "industry"}
     for c in pdf.columns:
-        if pdf[c].dtype == "object":
+        if c in str_cols:
             pdf[c] = pdf[c].astype(str)
+        elif c == "report_date":
+            continue  # 日期列已在上方转成 date，跳过数值转换
+        elif pdf[c].dtype == "object":
+            pdf[c] = pd.to_numeric(pdf[c], errors="coerce")
     return pdf
 
 

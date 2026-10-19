@@ -14,7 +14,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     ports:
-      - "3306:3306"
+      - "3307:3306"      # 宿主机 3307（本机已有 mysqld 占用 3306）→ 容器 3306
     volumes:
       - mysql_data:/var/lib/mysql
       # 首次初始化时自动执行建表脚本（数据卷为空时生效）

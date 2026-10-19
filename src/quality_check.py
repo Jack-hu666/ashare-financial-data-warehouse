@@ -50,7 +50,8 @@ def run_checks(spark, inject_bad: bool = False) -> list[tuple[str, str, str]]:
 
     # 规则 3：行业平均毛利率环比波动（abs > 0.3 告警）
     gm = dwd.withColumn(
-        "gross_margin", (F.col("revenue") - F.col("cost")) / F.nullif(F.col("revenue"), 0)
+        "gross_margin",
+        (F.col("revenue") - F.col("cost")) / F.nullif(F.col("revenue"), F.lit(0)),
     )
     ind = gm.groupBy("industry", "report_date").agg(
         F.avg("gross_margin").alias("avg_gm")

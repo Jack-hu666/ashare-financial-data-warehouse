@@ -82,7 +82,7 @@ MAX_RETRY = 3                # 单公司失败重试次数
 # 注意：本地演示用明文，生产环境应从环境变量 / 密钥系统读取。
 MYSQL = {
     "host": os.getenv("MYSQL_HOST", "localhost"),
-    "port": int(os.getenv("MYSQL_PORT", "3306")),
+    "port": int(os.getenv("MYSQL_PORT", "3307")),
     "user": os.getenv("MYSQL_USER", "root"),
     "password": os.getenv("MYSQL_PASSWORD", "root"),
     "database": os.getenv("MYSQL_DATABASE", "finance_dw"),
